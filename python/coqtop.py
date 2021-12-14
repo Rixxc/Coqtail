@@ -34,7 +34,6 @@ from xmlInterface import (
     Result,
     XMLInterface,
     XMLInterfaceBase,
-    partition_warnings,
     prettyxml,
 )
 
@@ -105,8 +104,10 @@ class Coqtop:
         assert self.coqtop is None
 
         try:
-            self.logger.debug("start")
+            self.logger.debug(f"start, coq_prog = {coq_prog}, args = {args}")
             self.xml, latest = XMLInterface(coq_path, coq_prog)
+            self.logger.debug("created xml interface")
+            self.handler.flush()
             launch = self.xml.launch(filename, args)
             self.logger.debug(launch)
             self.coqtop = subprocess.Popen(  # pylint: disable=consider-using-with
@@ -207,7 +208,10 @@ class Coqtop:
 
         # In addition to sending 'cmd', also check status in order to force it
         # to be evaluated
-        status, err2 = self.call(self.xml.status(encoding=encoding), timeout=timeout)
+        status = { "msg": "" }
+        err2 = ""
+        if self.xml.use_status:
+            status, err2 = self.call(self.xml.status(encoding=encoding), timeout=timeout)
 
         # Combine messages
         msgs = "\n\n".join(
@@ -247,6 +251,7 @@ class Coqtop:
             self.states = self.states[:-steps]
             steps -= fake_steps
 
+        self.logger.debug("rewind: %d steps -> %d", steps, self.state_id)
         response, err = self.call(self.xml.edit_at(self.state_id, steps))
         return (
             isinstance(response, Ok),
@@ -382,6 +387,22 @@ class Coqtop:
         else:
             return True, "Command only allowed in script.", None, ""
 
+    def mix_error(self, res: Result, stderr: str) -> Tuple[Result, str]:
+        """Maybe bubbles up an error found in stderr"""
+        # Abort if an error is printed to stderr, but ignore warnings.
+        # NOTE: If `warnings_wf` is False because this version of Coq does
+        # not follow the pattern expected by `partition_warnings` then
+        # pretend everything is a warning and hope for the best.
+        partitioned = self.xml.check_stderr(stderr)
+        if partitioned is not None:
+            warns, errs, unexpected, e = partitioned
+            if unexpected:
+                return UNEXPECTED_ERR, stderr
+            if e is not None:
+                return e, stderr
+        return (res, stderr)
+
+
     # Interacting with Coqtop #
     def call(
         self,
@@ -403,11 +424,11 @@ class Coqtop:
         # does not depend on the value it is passed since it is None
         cmd, msg = cmdtype_msg
         if msg is None:
-            return self.xml.standardize(cmd, Ok(None)), self.collect_err()
+            return self.mix_error(self.xml.standardize(cmd, Ok(None)), self.collect_err())
 
         # Don't bother doing prettyxml if debugging isn't on
-        if self.logger.isEnabledFor(logging.DEBUG):
-            self.logger.debug(prettyxml(msg))
+        # if self.logger.isEnabledFor(logging.DEBUG):
+        #     self.logger.debug(prettyxml(msg))
         self.send_cmd(msg)
 
         with futures.ThreadPoolExecutor(1) as pool:
@@ -418,38 +439,39 @@ class Coqtop:
                 self.interrupt()
                 response, err = TIMEOUT_ERR, ""
 
-        return self.xml.standardize(cmd, response), err
+        return self.mix_error(self.xml.standardize(cmd, response), err)
 
     def get_answer(self) -> Tuple[Result, str]:
         """Read from 'out_q' and wait until a full response is received."""
         assert self.xml is not None
-        data = []
+        data = bytearray()
         poll_sec = 1
 
         while True:
-            # Abort if an error is printed to stderr, but ignore warnings.
-            # NOTE: If `warnings_wf` is False because this version of Coq does
-            # not follow the pattern expected by `partition_warnings` then
-            # pretend everything is a warning and hope for the best.
             err = self.collect_err()
-            if self.xml.warnings_wf and partition_warnings(err)[1] != "":
-                return UNEXPECTED_ERR, err
 
             try:
-                data.append(self.out_q.get(timeout=poll_sec))
+                data.extend(self.out_q.get(timeout=poll_sec))
             except Empty:
                 continue
-            xml = b"".join(data)
-            if not self.xml.worth_parsing(xml):
+            if not self.xml.worth_parsing(data):
+                decoded = data.decode("utf8")
+                self.logger.debug(f"not worth parsing: {decoded}")
                 continue
-            response = self.xml.raw_response(xml)
+            response = self.xml.raw_response(data)
 
             if response is None:
                 continue
 
+            if isinstance(response, Ok):
+                self.logger.debug(data)
+                self.logger.debug(response.val)
+            else:
+                self.logger.debug(response.msg, response.loc)
+
             # Don't bother doing prettyxml if debugging isn't on
-            if self.logger.isEnabledFor(logging.DEBUG):
-                self.logger.debug(prettyxml(b"<response>" + xml + b"</response>"))
+            # if self.logger.isEnabledFor(logging.DEBUG):
+            #     self.logger.debug(prettyxml(b"<response>" + data + b"</response>"))
             return response, err
 
     @staticmethod
@@ -538,3 +560,4 @@ class Coqtop:
             self.logger.addHandler(self.handler)
             self.logger.setLevel(logging.CRITICAL)
         return self.log.name if self.log is not None else None
+

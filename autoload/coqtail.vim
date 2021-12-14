@@ -291,7 +291,7 @@ function! coqtail#init() abort
     call b:coqtail_chan.open('localhost:' . s:port)
 
     " Prepare auxiliary panels
-    call coqtail#panels#init()
+    call coqtail#panels#init(b:coqtail_ft)
 
     " Shutdown the Coqtop interface when the last instance of this buffer is
     " closed

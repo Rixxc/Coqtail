@@ -46,7 +46,7 @@ function! s:panels(buf) abort
 endfunction
 
 " Open and initialize goal/info panel.
-function! s:init(name) abort
+function! s:init(lang, name) abort
   let l:name = a:name . 's'
   let l:bufname = substitute(a:name, '\l', '\u\0', '')
 
@@ -54,7 +54,7 @@ function! s:init(name) abort
   execute 'keepjumps badd ' . l:bufname . s:counter
   execute 'silent keepjumps keepalt hide edit ' . l:bufname . s:counter
   setlocal buftype=nofile
-  execute 'setlocal filetype=coq-' . l:name
+  execute 'setlocal filetype=' . a:lang . '-' . l:name
   setlocal noswapfile
   setlocal bufhidden=hide
   setlocal nobuflisted
@@ -68,14 +68,14 @@ function! s:init(name) abort
 endfunction
 
 " Create buffers for the auxiliary panels.
-function! coqtail#panels#init() abort
+function! coqtail#panels#init(lang) abort
   let l:main_buf = bufnr('%')
   let l:curpos = getcurpos()[1:]
   let l:coqtail_panel_bufs = {g:coqtail#panels#main: l:main_buf}
 
   " Add panels
   for l:panel in g:coqtail#panels#aux
-    let l:coqtail_panel_bufs[l:panel] = s:init(l:panel)
+    let l:coqtail_panel_bufs[l:panel] = s:init(a:lang, l:panel)
   endfor
   for l:buf in values(l:coqtail_panel_bufs)
     call setbufvar(l:buf, 'coqtail_panel_bufs', l:coqtail_panel_bufs)
