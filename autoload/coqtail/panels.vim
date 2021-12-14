@@ -60,6 +60,7 @@ function! s:init(lang, name) abort
   setlocal nobuflisted
   setlocal nocursorline
   setlocal wrap
+  setlocal nolist " too noisy with the ( 1) x <$             (many spaces trail...)
 
   let b:coqtail_panel_open = 1
   let b:coqtail_panel_size = [-1, -1]

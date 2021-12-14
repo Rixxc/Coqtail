@@ -8,7 +8,6 @@ let b:undo_ftplugin = []
 
 let b:coqtail_coq_prog = "easycrypt"
 let b:coqtail_ft = "coq" " coq is close enough, has goals
-setlocal nolist " too noisy with the "( 1) x <$             "
 
 if g:coqtail#supported
   call coqtail#register()
