@@ -383,7 +383,6 @@ class XMLInterfaceBase(metaclass=ABCMeta):
     # XML Parsing and Marshalling #
     def _to_unit(self, _xml: ET.Element) -> Tuple[()]:
         """Expect: <unit />"""
-        # pylint: disable=no-self-use
         return ()
 
     def _of_unit(self, _val: Tuple[()]) -> ET.Element:
@@ -392,7 +391,7 @@ class XMLInterfaceBase(metaclass=ABCMeta):
 
     def _to_bool(self, xml: ET.Element) -> bool:
         """Expect: <bool val="true | false" />"""
-        # pylint: disable=no-else-return,no-self-use
+        # pylint: disable=no-else-return
         val = xml.get("val")
 
         if val == "true":
@@ -407,7 +406,6 @@ class XMLInterfaceBase(metaclass=ABCMeta):
 
     def _to_int(self, xml: ET.Element) -> int:
         """Expect: <int>int</int>"""
-        # pylint: disable=no-self-use
         if xml.text is not None:
             return int(xml.text)
         raise unexpected((str,), None)
@@ -418,7 +416,6 @@ class XMLInterfaceBase(metaclass=ABCMeta):
 
     def _to_string(self, xml: ET.Element) -> str:
         """Expect: <string>str</string>"""
-        # pylint: disable=no-self-use
         return "".join(xml.itertext())
 
     def _of_string(self, val: str) -> ET.Element:
@@ -582,7 +579,7 @@ class XMLInterfaceBase(metaclass=ABCMeta):
         for xml in xmls:
             if xml.tag == "value":
                 res = self._to_response(xml)
-            elif xml.tag in ("message", "feedback"):
+            elif xml.tag in {"message", "feedback"}:
                 # _to_py is guaranteed to either return str or
                 # a sequence of tagged tokens for message or feedback
                 msg = self._to_py(xml)
@@ -887,7 +884,6 @@ class XMLInterface84(XMLInterfaceBase):
         Return:
           state_id: int - The current state id (ignored in 8.4)
         """
-        # pylint: disable=no-self-use
         return Ok(0)
 
     def add(
@@ -919,7 +915,6 @@ class XMLInterface84(XMLInterfaceBase):
           res_msg: str - Messages produced by 'Add'
           state_id: int - The new state id (ignored in 8.4)
         """
-        # pylint: disable=no-self-use
         if isinstance(res, Ok):
             res_msg: str = res.val
             res.val = {"res_msg": res_msg, "state_id": 0}
@@ -969,7 +964,6 @@ class XMLInterface84(XMLInterfaceBase):
         Return:
           msg: str - Messages produced by 'Query'
         """
-        # pylint: disable=no-self-use
         if isinstance(res, Ok):
             msg: str = res.val
             res.msg = msg
@@ -990,7 +984,6 @@ class XMLInterface84(XMLInterfaceBase):
           shelved: list Goal - Shelved goals (dummy value in 8.4)
           given_up: list Goal - Admitted goals (dummy value in 8.4)
         """
-        # pylint: disable=no-self-use
         if isinstance(res, Ok):
             opt_goals: XMLInterfaceBase.CoqOption = res.val
             if opt_goals is not None:
@@ -1026,7 +1019,6 @@ class XMLInterface84(XMLInterfaceBase):
           opts: list (string * string * ?) - Triples of all option names,
                                              descriptions, and current values
         """
-        # pylint: disable=no-self-use
         if isinstance(res, Ok):
             raw_opts: List[Tuple[str, "XMLInterface84.CoqOptionState"]] = res.val
             opts: List[Tuple[str, str, Any]] = [
@@ -1279,7 +1271,6 @@ class XMLInterface85(XMLInterfaceBase):
         Return:
           state_id: int - The current state id
         """
-        # pylint: disable=no-self-use
         if isinstance(res, Ok):
             val: "XMLInterface85.CoqStateId" = res.val
             res.val = val.id
@@ -1313,7 +1304,6 @@ class XMLInterface85(XMLInterfaceBase):
           res_msg: str - Messages produced by 'Add'
           state_id: int - The new state id
         """
-        # pylint: disable=no-self-use
         if isinstance(res, Ok):
             val: Tuple["XMLInterface85.CoqStateId", Tuple[Any, str]] = res.val
             res.val = {"res_msg": val[1][1], "state_id": val[0].id}
@@ -1339,7 +1329,6 @@ class XMLInterface85(XMLInterfaceBase):
         Return:
           extra_steps: int - The number of additional steps rewound (ignored in >8.4)
         """
-        # pylint: disable=no-self-use
         if isinstance(res, Ok):
             res.val = 0
         return res
@@ -1379,7 +1368,6 @@ class XMLInterface85(XMLInterfaceBase):
           shelved: list Goal - Shelved goals
           given_up: list Goal - Admitted goals
         """
-        # pylint: disable=no-self-use
         if isinstance(res, Ok):
             opt_goals: XMLInterfaceBase.CoqOption = res.val
             if opt_goals is not None:
@@ -1415,7 +1403,6 @@ class XMLInterface85(XMLInterfaceBase):
           opts: list (string * string * ?) - Triples of all option names,
                                              descriptions, and current values
         """
-        # pylint: disable=no-self-use
         if isinstance(res, Ok):
             raw_opts: List[Tuple[str, "XMLInterface85.CoqOptionState"]] = res.val
             opts: List[Tuple[str, str, Any]] = [
