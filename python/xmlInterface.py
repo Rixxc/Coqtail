@@ -14,6 +14,9 @@ from abc import ABCMeta, abstractmethod
 from enum import Enum
 from pathlib import Path
 from shutil import which
+from dataclasses import dataclass
+from result import *
+from easycrypt import EasyCryptStdout, EasyCryptStderr, EasyCryptOutput
 from typing import (
     Any,
     Callable,
@@ -67,28 +70,6 @@ WARNING_RE = re.compile("^(Warning:[^]]+])$", flags=re.MULTILINE)
 
 class FindCoqtopError(Exception):
     """An exception for when a coqtop executable could not be found."""
-
-
-# Coqtop Response Types #
-class Ok:
-    """A response representing success."""
-
-    def __init__(self, val: Any, msg: str = "") -> None:
-        """Initialize values."""
-        self.val = val
-        self.msg = msg
-
-
-class Err:
-    """A response representing failure."""
-
-    def __init__(self, msg: str, loc: Tuple[int, int] = (-1, -1)) -> None:
-        """Initialize values."""
-        self.msg = msg
-        self.loc = loc
-
-
-Result = Union[Ok, Err]
 
 # The error in case of a timeout
 TIMEOUT_ERR = Err(
@@ -230,7 +211,7 @@ def join_tagged_tokens(tagged_tokens: Iterable[TaggedToken]) -> str:
     return "".join(s for s, _ in tagged_tokens)
 
 
-def partition_warnings(stderr: str) -> Tuple[str, str]:
+def partition_warnings(stderr: str) -> Optional[Tuple[str, str]]:
     """Partition Coq stderr messages into warnings and errors.
 
     Warnings are assumed to have the following form:
@@ -242,6 +223,8 @@ def partition_warnings(stderr: str) -> Tuple[str, str]:
     # Strip whitespace and drop empty strings
     for msg in filter(None, map(str.strip, WARNING_RE.split(stderr))):
         (warns if WARNING_RE.fullmatch(msg) else errs).append(msg)
+    if not warns and not errs:
+        return None
     return "\n".join(warns), "\n".join(errs)
 
 
@@ -345,6 +328,25 @@ class XMLInterfaceBase(metaclass=ABCMeta):
         # A flag indicating whether warnings printed to stderr are formatted in
         # the manner expected by partition_warnings
         self.warnings_wf = False
+        self.use_status = True
+
+    def check_stderr(self, stderr: str) -> Optional[Tuple[str, str, bool, Optional[Err]]]:
+        """
+        Find warnings and errors in stderr. Returns
+            (warnings_str, errors_str, unexpected, err) or None.
+        If unexpected is True, Coqtail has missed something for some Coq version.
+        If err is not None, it should be taken to be the error value for this call.
+        """
+        if not self.warnings_wf:
+            return None
+        parted = partition_warnings(stderr)
+        if parted is None:
+            return None
+        warns, errs = parted
+        # for no coq version do we *expect* errors in stderr. Those should be returned as XML in stdout.
+        # so if there are errs, they are unexpected, and we return None for err
+        return (warns, errs, None)
+
 
     def launch(self, filename: str, args: Iterable[str]) -> Tuple[str, ...]:
         """The command to launch coqtop with the appropriate arguments."""
@@ -567,8 +569,7 @@ class XMLInterfaceBase(metaclass=ABCMeta):
             return Err(msg, (loc_s, loc_e))
         raise unexpected(("good", "fail"), val)
 
-    @staticmethod
-    def worth_parsing(data: bytes) -> bool:
+    def worth_parsing(self, data: bytes) -> bool:
         """Check if data contains a complete value node yet."""
         return b"</value>" in data
 
@@ -2031,6 +2032,8 @@ def XMLInterface(
     coq_path: Optional[str],
     coq_prog: Optional[str],
 ) -> Tuple[XMLInterfaceBase, Optional[str]]:
+    if coq_prog == "easycrypt":
+        return EasyCryptInterface((1,2,3), "1.2.3", coq_path, coq_prog), None
     """Return the appropriate XMLInterface class for the given version."""
     coq = find_coq(coq_path, coq_prog)
     coq_path = str(Path(coq).parent)
@@ -2044,3 +2047,143 @@ def XMLInterface(
         XMLInterfaceLatest(version, str_version, coq_path, coq_prog),
         ".".join(map(str, XMLInterfaces[-1][0])),
     )
+
+class EasyCryptInterface(XMLInterfaceBase):
+    def __init__(
+        self,
+        version: Tuple[int, int, int],
+        str_version: str,
+        coq_path: str,
+        coq_prog: Optional[str],
+    ) -> None:
+        coq_prog = "easycrypt"
+        super().__init__(version, str_version, coq_path, coq_prog)
+        self.launch_args = ["-emacs"]
+        self.noop = "pragma noop."
+        self.noop_b = b"pragma noop."
+        self.use_status = True
+        self.queries = ["Print"]
+        self._to_py_funcs: Dict[str, Callable[[ET.Element], Any]] = {}
+        self._of_py_funcs: Dict[str, Callable[[Any], ET.Element]] = {}
+
+        # Map from coqtop command to standardization function
+        self._standardize_funcs.update(
+            {
+                # "Init": self._standardize_init,
+                "Add": self._standardize_add,
+                # "Query": self._standardize_query,
+                "Goal": self._standardize_goal,
+                "Status": self._standardize_status,
+                "Edit_at": self._standardize_edit_at,
+                # "GetOptions": self._standardize_get_options,
+            }
+        )
+
+        # A flag indicating whether warnings printed to stderr are formatted in
+        # the manner expected by partition_warnings
+        self.warnings_wf = False
+
+    def init(self, encoding: str = "utf-8") -> Tuple[str, Optional[bytes]]:
+        """Create an XML string to initialize Coqtop."""
+        return ("Init", None)
+
+    def query(
+        self,
+        query: str,
+        state: int,
+        encoding: str = "utf-8",
+    ) -> Tuple[str, Optional[bytes]]:
+        """Create an XML string to pose a query to Coqtop."""
+        return ("Query", query.encode(encoding))
+
+
+    def worth_parsing(self, data: bytes) -> bool:
+        return b"|check]>\n" in data or b"|report]>\n" in data
+
+    def raw_response(self, data: bytes) -> Optional[Result]:
+        return Ok(EasyCryptStdout.parse_bytes(data))
+
+    def check_stderr(self, stderr: str) -> Optional[Tuple[str, str, Optional[Err]]]:
+        # TODO: try "pragma noice." Weird.
+        err = EasyCryptStderr.parse_str(stderr)
+        if err is None:
+            return None
+        return ("", "", False, err)
+
+    def get_options(self, encoding: str = "utf-8") -> Tuple[str, Optional[bytes]]:
+        return ("GetOptions", None)
+    def set_options(
+        self, option: str, val: XMLInterfaceBase.OptionArg, encoding: str = "utf-8",
+    ) -> Tuple[str, Optional[bytes]]:
+        return ("SetOptions", None)
+    def add(self, cmd: str, _state: int, encoding: str = "utf-8") -> Tuple[str, Optional[bytes]]:
+        ba = bytearray(cmd.encode(encoding, "ignore"))
+        ba.extend(b"\n")
+        return ("Add", ba)
+    def status(self, encoding: str = "utf-8") -> Tuple[str, Optional[bytes]]:
+        return ("Status", b"pragma Goals:printall.\n")
+    def goal(self, encoding: str = "utf-8") -> Tuple[str, Optional[bytes]]:
+        return ("Goal", b"pragma Goals:printone.\n")
+    def edit_at(self, state: int, _steps: int, encoding: str = "utf-8",) -> Tuple[str, Optional[bytes]]:
+        """Create an XML string to move Coqtop to a specific location."""
+        return (
+            "Edit_at",
+            f"undo {state}.\n".encode(encoding, "ignore")
+        )
+
+    def launch(self, filename: str, args: Iterable[str]) -> Tuple[str, ...]:
+        return (
+            ("easycrypt",)
+            + tuple(self.launch_args)
+            + self.topfile(filename, [])
+            + tuple([])
+        )
+
+    def _standardize_add(self, res: Result) -> Result:
+        """Standardize the info returned by 'Add'.
+        Return:
+          res_msg: str - Messages produced by 'Add' (removed in 8.14)
+          state_id: int - The new state id
+        """
+        if isinstance(res, Ok):
+            val: EasyCryptOutput = res.val
+            res.val = {"res_msg": "", "state_id": val.prompt[0]}
+        return res
+
+    def _standardize_goal(self, res: Result) -> Result:
+        """Standardize the info returned by 'Goal'.
+        Return:
+          fg: list Goal - The current goals
+          bg: list (list Goal * list Goal) - Unfocused goals
+          shelved: list Goal - Shelved goals (dummy value in 8.4)
+          given_up: list Goal - Admitted goals (dummy value in 8.4)
+        """
+        def to_goal_list(s: str) -> List[Goal]:
+            divider = "\n------------------------------------------------------------------------\n"
+            hyp, div, ccl = s.partition(divider)
+            if div=="":
+                return []
+            return [Goal([hyp], ccl)]
+        if isinstance(res, Ok):
+            val: EasyCryptOutput = res.val
+            res.val = Goals(to_goal_list(val.output), [], [], [])
+        return res
+
+    def _standardize_status(self, res: Result) -> Result:
+        """Standardize the info returned by 'Status'.
+        """
+        if isinstance(res, Ok):
+            val: EasyCryptOutput = res.val
+            res.val = XMLInterface84.CoqStatus([], XMLInterfaceBase.Some("proofname"), [], val.prompt[0], 1)
+        return res
+
+    def _standardize_edit_at(self, res: Result) -> Result:
+        """Standardize the info returned by 'Edit_at'.
+        Return:
+          extra_steps: int - The number of additional steps rewound (ignored in >8.4)
+        """
+        # pylint: disable=no-self-use
+        if isinstance(res, Ok):
+            res.val = 0
+        return res
+

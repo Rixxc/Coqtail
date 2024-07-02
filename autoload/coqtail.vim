@@ -320,7 +320,7 @@ function! coqtail#init() abort
     endif
 
     " Prepare auxiliary panels
-    call coqtail#panels#init()
+    call coqtail#panels#init(b:coqtail_ft)
 
     " Shutdown the Coqtop interface when the last instance of this buffer is
     " closed
